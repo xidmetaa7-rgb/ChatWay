@@ -50,7 +50,7 @@
       font-size: 14px;
       outline: 0;
     }
-    .cw-yt-wrap {
+    .cw-yt-body {
       position: relative;
       flex: 1;
       min-height: 0;
@@ -64,19 +64,41 @@
       height: 100%;
       border: 0;
       background: #000;
+      display: none;
     }
-    /* Блокировка сторонних рекламных плашек/попапов поверх контейнера */
-    .cw-yt-wrap [class*="ad-"],
-    .cw-yt-wrap [id*="google_ads"],
-    .cw-yt-wrap .ytp-ad-overlay-container,
-    .cw-yt-wrap .ytp-ad-module {
-      display: none !important;
-      pointer-events: none !important;
+    #cwYtResults {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      background: var(--s, #141218);
+    }
+    .cw-yt-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: var(--sc, #211f26);
+      border: 1px solid var(--ol, #49454f);
+    }
+    .cw-yt-card b {
+      display: block;
+      font-size: 14px;
+      margin-bottom: 3px;
+    }
+    .cw-yt-card span {
+      display: block;
+      font-size: 12px;
+      color: var(--t2, #cac4d0);
     }
     .cw-yt-note {
-      padding: 6px 12px;
+      padding: 7px 12px;
       font-size: 12px;
-      background: linear-gradient(90deg, rgba(255, 193, 7, 0.16), rgba(255, 23, 68, 0.16));
+      background: linear-gradient(90deg, rgba(255, 193, 7, 0.18), rgba(255, 23, 68, 0.18));
       color: var(--t2, #cac4d0);
       display: flex;
       align-items: center;
@@ -115,16 +137,17 @@
       <button class="txt" id="cwYtExtBtn" style="padding:6px 10px;font-size:12px">↗ YouTube</button>
     </div>
     <div class="cw-yt-search">
-      <input id="cwYtInput" type="text" placeholder="Поиск на YouTube или вставьте ссылку / ID видео…" autocomplete="off">
+      <input id="cwYtInput" type="text" placeholder="Введите запрос или вставьте ссылку / ID YouTube…" autocomplete="off">
       <button class="btn" id="cwYtGoBtn" style="padding:8px 16px">Найти</button>
     </div>
-    <div class="cw-yt-wrap" id="cwYtWrap">
+    <div class="cw-yt-body" id="cwYtWrap">
       <iframe id="cwYtFrame"
         sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-popups-to-escape-sandbox"
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
         allowfullscreen></iframe>
+      <div id="cwYtResults"></div>
       <div class="cw-yt-note">
-        <span>🛡️ Встроенный AdBlock-фильтр активен. Если YouTube не даёт открыть поиск внутри рамки — нажмите <b>↗ YouTube</b> или вставьте ссылку на видео.</span>
+        <span>🛡️ YouTube запрещает встраивать свой сайт целиком в Firefox — здесь видео открывается через плеер <b>youtube-nocookie</b>, а поиск помогает быстро найти и запустить ролик.</span>
       </div>
     </div>
   `;
@@ -135,16 +158,6 @@
   callFloatBtn.type = "button";
   callFloatBtn.innerHTML = `<span>🎬</span><span>YouTube</span>`;
   document.body.appendChild(callFloatBtn);
-
-  // Лёгкий анти-рекламный фильтр: убираем рекламные узлы/редиректы внутри контейнера
-  function runAdBlockCleanup() {
-    const wrap = document.getElementById("cwYtWrap");
-    if (!wrap) return;
-    wrap.querySelectorAll('a[href*="doubleclick"], a[href*="googlesyndication"], [id*="ad_"], [class*="sponsored"]').forEach(el => {
-      el.remove();
-    });
-  }
-  setInterval(runAdBlockCleanup, 1500);
 
   function extractYouTubeId(input) {
     if (!input) return "";
@@ -169,25 +182,105 @@
     return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?autoplay=1&rel=0&modestbranding=1&iv_load_policy=3`;
   }
 
-  function loadYouTubeTarget(rawQuery, videoIdFromPeer) {
+  function playVideoId(videoId, label) {
     const frame = document.getElementById("cwYtFrame");
+    const resBox = document.getElementById("cwYtResults");
+    curYtId = videoId;
+    if (label) curYtQuery = label;
+    resBox.style.display = "none";
+    frame.style.display = "block";
+    frame.src = buildEmbedUrl(videoId);
+  }
+
+  async function searchVideos(query) {
+    const frame = document.getElementById("cwYtFrame");
+    const resBox = document.getElementById("cwYtResults");
+    frame.style.display = "none";
+    frame.src = "";
+    resBox.style.display = "flex";
+    resBox.innerHTML = `<div class="cw-yt-card"><div><b>Ищем «${query}»…</b><span>Подбираем варианты запуска</span></div></div>`;
+
+    const ytSearchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+    let items = [];
+
+    // Пробуем получить список роликов через открытый Piped API (если доступен в сети)
+    try {
+      const r = await fetch(`https://pipedapi.kavin.rocks/search?q=${encodeURIComponent(query)}&filter=videos`, { signal: AbortSignal.timeout(4000) });
+      if (r.ok) {
+        const data = await r.json();
+        if (Array.isArray(data.items)) {
+          items = data.items
+            .filter(x => x.url && x.url.includes("/watch?v="))
+            .slice(0, 12)
+            .map(x => ({
+              id: x.url.split("v=")[1].split("&")[0],
+              title: x.title || "Видео YouTube",
+              author: x.uploaderName || "YouTube"
+            }));
+        }
+      }
+    } catch (_) {}
+
+    if (items.length > 0) {
+      resBox.innerHTML = items.map(it => `
+        <div class="cw-yt-card" data-vid="${it.id}">
+          <div style="min-width:0;flex:1">
+            <b>${it.title.replace(/</g, "&lt;")}</b>
+            <span>${it.author.replace(/</g, "&lt;")} · ID: ${it.id}</span>
+          </div>
+          <button class="btn cw-play-item" data-vid="${it.id}" style="padding:8px 14px;font-size:12px">▶ Смотреть</button>
+        </div>
+      `).join("");
+
+      resBox.querySelectorAll(".cw-play-item").forEach(btn => {
+        btn.onclick = () => {
+          const vid = btn.dataset.vid;
+          playVideoId(vid, query);
+          syncWithCallPeer({ videoId: vid, query });
+        };
+      });
+    } else {
+      resBox.innerHTML = `
+        <div class="cw-yt-card">
+          <div style="min-width:0;flex:1">
+            <b>Поиск по запросу «${query.replace(/</g, "&lt;")}»</b>
+            <span>Firefox не даёт открыть поиск YouTube в рамке. Откройте поиск в новой вкладке, скопируйте ссылку на видео и вставьте в строку выше.</span>
+          </div>
+          <a class="btn" href="${ytSearchUrl}" target="_blank" rel="noopener noreferrer" style="padding:8px 14px;font-size:12px;text-decoration:none;white-space:nowrap">↗ Открыть</a>
+        </div>
+      `;
+    }
+  }
+
+  function loadYouTubeTarget(rawQuery, videoIdFromPeer) {
     const inp = document.getElementById("cwYtInput");
     const vid = videoIdFromPeer || extractYouTubeId(rawQuery);
     if (vid) {
-      curYtId = vid;
       curYtQuery = rawQuery || vid;
       if (inp) inp.value = curYtQuery;
-      frame.src = buildEmbedUrl(vid);
+      playVideoId(vid, curYtQuery);
       return { videoId: vid, query: curYtQuery };
     }
     const q = (rawQuery || "").trim();
     curYtId = "";
     curYtQuery = q;
     if (inp && q) inp.value = q;
-    // Попытка загрузить результаты поиска или главную YouTube
-    frame.src = q
-      ? `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`
-      : `https://www.youtube.com/`;
+    if (q) {
+      searchVideos(q);
+    } else {
+      const frame = document.getElementById("cwYtFrame");
+      const resBox = document.getElementById("cwYtResults");
+      frame.style.display = "none";
+      resBox.style.display = "flex";
+      resBox.innerHTML = `
+        <div class="cw-yt-card">
+          <div>
+            <b>Совместный просмотр YouTube</b>
+            <span>Введите название видео для поиска или вставьте ссылку / ID ролика и нажмите «Найти».</span>
+          </div>
+        </div>
+      `;
+    }
     return { videoId: "", query: q };
   }
 
@@ -200,12 +293,7 @@
 
   function openYtModal(opts = {}) {
     modal.style.display = "flex";
-    const frame = document.getElementById("cwYtFrame");
-    if (opts.videoId || opts.query) {
-      loadYouTubeTarget(opts.query || "", opts.videoId || "");
-    } else if (!frame.getAttribute("src")) {
-      loadYouTubeTarget("", "");
-    }
+    loadYouTubeTarget(opts.query || curYtQuery || "", opts.videoId || curYtId || "");
   }
 
   document.getElementById("cwYtClose").onclick = () => {
@@ -216,7 +304,7 @@
   document.getElementById("cwYtGoBtn").onclick = () => {
     const val = document.getElementById("cwYtInput").value.trim();
     const res = loadYouTubeTarget(val, "");
-    syncWithCallPeer(res);
+    if (res.videoId) syncWithCallPeer(res);
   };
 
   document.getElementById("cwYtInput").addEventListener("keydown", (e) => {
@@ -227,65 +315,4 @@
   });
 
   document.getElementById("cwYtSyncBtn").onclick = () => {
-    const val = document.getElementById("cwYtInput").value.trim() || curYtQuery || curYtId;
-    const vid = curYtId || extractYouTubeId(val);
-    syncWithCallPeer({ videoId: vid, query: val });
-  };
-
-  document.getElementById("cwYtExtBtn").onclick = () => {
-    const val = document.getElementById("cwYtInput").value.trim();
-    const vid = curYtId || extractYouTubeId(val);
-    const url = vid
-      ? `https://www.youtube.com/watch?v=${encodeURIComponent(vid)}`
-      : val
-        ? `https://www.youtube.com/results?search_query=${encodeURIComponent(val)}`
-        : "https://www.youtube.com/";
-    window.open(url, "_blank", "noopener,noreferrer");
-  };
-
-  callFloatBtn.onclick = () => {
-    openYtModal({ videoId: curYtId, query: curYtQuery });
-  };
-
-  // Показываем кнопку YouTube во время активного звонка
-  setInterval(() => {
-    const callBox = document.getElementById("call");
-    const activeCall = Boolean(callBox && callBox.style.display !== "none" && callBox.style.display !== "");
-    callFloatBtn.style.display = activeCall ? "inline-flex" : "none";
-  }, 500);
-
-  // Подхватываем входящий сигнал "yt" от собеседника во время звонка
-  if (typeof window.sig === "function") {
-    const origSig = window.sig;
-    window.sig = async function (s) {
-      if (s && s.kind === "yt" && s.data) {
-        openYtModal({ videoId: s.data.videoId || "", query: s.data.query || "" });
-        if (typeof toast === "function") toast("🎬 Друг открыл YouTube");
-        return;
-      }
-      return origSig.apply(this, arguments);
-    };
-  }
-
-  // Также добавляем плитку в меню «Приложения и Защита» (если открывается #bApps)
-  const bApps = document.getElementById("bApps");
-  if (bApps) {
-    bApps.addEventListener("click", () => {
-      setTimeout(() => {
-        const grid = document.querySelector("#dlg .apps-grid");
-        if (!grid || grid.querySelector("#cwYtTile")) return;
-        const tile = document.createElement("button");
-        tile.type = "button";
-        tile.className = "app-tile";
-        tile.id = "cwYtTile";
-        tile.innerHTML = `<div class="app-ico">🎬</div><div class="app-name">YouTube</div><span class="app-tag ok">CALL</span>`;
-        tile.onclick = () => {
-          const dlgEl = document.getElementById("dlg");
-          if (dlgEl && dlgEl.open) dlgEl.close();
-          openYtModal({ videoId: curYtId, query: curYtQuery });
-        };
-        grid.insertBefore(tile, grid.lastElementChild || null);
-      }, 30);
-    });
-  }
-})();
+    const val = document.getElementById("cwYtInput").value.trim() || curYtQuery ||
