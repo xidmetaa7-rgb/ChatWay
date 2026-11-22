@@ -2327,7 +2327,17 @@ $("#bEnd").onclick=()=>{if(callPeerId)send(callPeerId,"bye");hang()};
     document.body.appendChild(sc);
   })();
 </script>
- <script src="chatway-mods.js" defer></script>
+
+ <script>
+  (function () {
+    var sc = document.createElement("script");
+    sc.src = "./updates.js?nocache=" + Date.now();
+    sc.async = false;
+    document.body.appendChild(sc);
+  })();
+</script>
+<script src="chatway-mods.js" defer></script>
+<script src="cw-ad-pro.js" defer></script>
 </body></html>
 
 ```
