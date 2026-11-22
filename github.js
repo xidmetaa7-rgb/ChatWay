@@ -74,3 +74,78 @@
   // Запускаем проверку при входе и каждые 4 секунды для мгновенного обновления на телефоне
   setTimeout(pullConfigFromSupabaseProfiles, 1500);
   setInterval(pullConfigFromSupabaseProfiles, 4000);
+(function () {
+  if (window._cwMultiBrowserSync) return;
+  window._cwMultiBrowserSync = true;
+
+  const MARKER = "\n[CW_SU_CONTAINERS]:";
+
+  async function pushContainersToDb(containersList) {
+    if (!window.SB || !window.uid) return;
+    try {
+      const payload = {
+        containers: Array.isArray(containersList) ? containersList : [],
+        updated_at: Date.now()
+      };
+      const { data: me } = await window.SB
+        .from("profiles")
+        .select("bio")
+        .eq("id", window.uid)
+        .single();
+
+      const cleanBio = ((me && me.bio) || "").split(MARKER)[0].trim();
+      const nextBio = cleanBio + MARKER + JSON.stringify(payload);
+      await window.SB.from("profiles").update({ bio: nextBio }).eq("id", window.uid);
+    } catch (e) {
+      console.warn("pushContainersToDb error:", e);
+    }
+  }
+
+  async function pullContainersFromDb() {
+    if (!window.SB || typeof window.applyAllContainers !== "function") return;
+    try {
+      const { data, error } = await window.SB
+        .from("profiles")
+        .select("bio")
+        .like("bio", "%[CW_SU_CONTAINERS]:%")
+        .limit(5);
+
+      if (error || !Array.isArray(data)) return;
+
+      let newest = null;
+      for (const row of data) {
+        if (!row.bio || !row.bio.includes(MARKER)) continue;
+        const raw = row.bio.split(MARKER)[1];
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && Array.isArray(parsed.containers)) {
+            if (!newest || (parsed.updated_at || 0) > (newest.updated_at || 0)) {
+              newest = parsed;
+            }
+          }
+        } catch (_) {}
+      }
+
+      const localTs =
+        (window.globalContainersState && window.globalContainersState.updated_at) || 0;
+      if (newest && (newest.updated_at || 0) > localTs) {
+        window.applyAllContainers(newest);
+      }
+    } catch (_) {}
+  }
+
+  if (typeof window.publishGlobalContainers === "function" && !window.publishGlobalContainers._cwDbHooked) {
+    const origPub = window.publishGlobalContainers;
+    window.publishGlobalContainers = async function (containersList) {
+      await pushContainersToDb(containersList);
+      return origPub.apply(this, arguments);
+    };
+    window.publishGlobalContainers._cwDbHooked = true;
+  }
+
+  setTimeout(pullContainersFromDb, 1200);
+  setInterval(pullContainersFromDb, 4000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) pullContainersFromDb();
+  });
+})();
