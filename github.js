@@ -2,6 +2,57 @@
   if (window._cwUpdatesLoaded) return;
   window._cwUpdatesLoaded = true;
 
+  // =========================================================
+  // ЦЕНТРАЛЬНЫЙ РЕЕСТР ДАННЫХ ИЗ updates.js (УПРАВЛЯЕТСЯ SUPERUSER)
+  // =========================================================
+  const DEFAULT_UPDATE_CONFIG = {
+    version: "2026.11.22",
+    sortNewestFirst: true,
+    translateLangs: [
+      { code: "ru", label: "🇷🇺 Русский" },
+      { code: "en", label: "🇬🇧 English" },
+      { code: "az", label: "🇦🇿 Azərbaycan" },
+      { code: "tr", label: "🇹🇷 Türkçe" },
+      { code: "fa", label: "🇮🇷 فارسی" },
+      { code: "ar", label: "🇸🇦 العربية" }
+    ],
+    bakuPlaces: [
+      { name: "28 May Metro (28 Mall)", area: "Nəsimi", lat: 40.3798, lng: 49.8482 },
+      { name: "İçərişəhər Metro (Old City)", area: "Səbail", lat: 40.3656, lng: 49.8326 },
+      { name: "Koroğlu Transport Hub", area: "Nizami", lat: 40.4216, lng: 49.9197 },
+      { name: "Nəriman Nərimanov Metro", area: "Nərimanov", lat: 40.4027, lng: 49.8699 },
+      { name: "İnşaatçılar Metro", area: "Yasamal", lat: 40.3886, lng: 49.8054 },
+      { name: "Elmlər Akademiyası Metro", area: "Yasamal", lat: 40.3756, lng: 49.8147 },
+      { name: "Gənclik Metro (Gənclik Mall)", area: "Nərimanov", lat: 40.4004, lng: 49.8515 },
+      { name: "Port Baku / Bulvar", area: "Səbail", lat: 40.3728, lng: 49.8551 },
+      { name: "Heydər Əliyev Mərkəzi", area: "Nərimanov", lat: 40.3953, lng: 49.8673 },
+      { name: "Xətai Metro", area: "Xətai", lat: 40.3849, lng: 49.8696 }
+    ],
+    radioStreams: [
+      { id: "r_lofi", title: "☀️ Sunny Lo-Fi & Chill Radio", artist: "Radio Stream · Без регистрации", url: "https://streams.fluxfm.de/Chillhop/mp3-128/streams.fluxfm.de/" },
+      { id: "r_jazz", title: "🎷 Smooth Lounge & Day Radio", artist: "Radio Stream · Без регистрации", url: "https://streams.fluxfm.de/Lounge/mp3-128/streams.fluxfm.de/" },
+      { id: "r_pop", title: "⚡ Energy Hits Radio", artist: "Radio Stream · Без регистрации", url: "https://streams.fluxfm.de/boomfm/mp3-128/streams.fluxfm.de/" }
+    ],
+    enabledSections: {
+      sortChats: true,
+      translator: true,
+      transport: true,
+      music: true,
+      miniPlayer: true
+    },
+    customCode: {
+      html: "",
+      css: "",
+      js: ""
+    }
+  };
+
+  function cloneDefaultConfig() {
+    return JSON.parse(JSON.stringify(DEFAULT_UPDATE_CONFIG));
+  }
+
+  let activeUpdateConfig = cloneDefaultConfig();
+
   // --- Стили для светлых модулей транспорта/музыки, перевода и мини-плеера ---
   const style = document.createElement("style");
   style.id = "cw-updates-style";
@@ -194,10 +245,271 @@
   document.head.appendChild(style);
 
   // =========================================================
+  // УПРАВЛЕНИЕ КОНТЕЙНЕРАМИ updates.js ИЗ СТУДИИ SUPERUSER
+  // =========================================================
+  function applyUpdateConfig(cfg) {
+    const base = cloneDefaultConfig();
+    activeUpdateConfig = {
+      ...base,
+      ...(cfg || {}),
+      enabledSections: { ...base.enabledSections, ...((cfg && cfg.enabledSections) || {}) },
+      customCode: { ...base.customCode, ...((cfg && cfg.customCode) || {}) },
+      translateLangs: Array.isArray(cfg && cfg.translateLangs) && cfg.translateLangs.length ? cfg.translateLangs : base.translateLangs,
+      bakuPlaces: Array.isArray(cfg && cfg.bakuPlaces) && cfg.bakuPlaces.length ? cfg.bakuPlaces : base.bakuPlaces,
+      radioStreams: Array.isArray(cfg && cfg.radioStreams) && cfg.radioStreams.length ? cfg.radioStreams : base.radioStreams
+    };
+
+    localStorage.setItem("cw_updates_js_config", JSON.stringify(activeUpdateConfig));
+
+    // Применяем кастомные HTML / CSS / JS из конфига updates.js
+    document.querySelectorAll(".cw-upd-css,.cw-upd-html,.cw-upd-js").forEach((el) => el.remove());
+
+    if ((activeUpdateConfig.customCode.css || "").trim()) {
+      const s = document.createElement("style");
+      s.className = "cw-upd-css";
+      s.textContent = activeUpdateConfig.customCode.css;
+      document.head.appendChild(s);
+    }
+
+    if ((activeUpdateConfig.customCode.html || "").trim()) {
+      const box = document.createElement("div");
+      box.className = "cw-upd-html";
+      box.innerHTML = activeUpdateConfig.customCode.html;
+      document.body.appendChild(box);
+    }
+
+    if ((activeUpdateConfig.customCode.js || "").trim()) {
+      try {
+        const sc = document.createElement("script");
+        sc.className = "cw-upd-js";
+        sc.textContent = activeUpdateConfig.customCode.js;
+        document.body.appendChild(sc);
+      } catch (err) {
+        console.warn("updates.js custom JS error:", err);
+      }
+    }
+
+    // Обновляем видимость элементов updates.js
+    const trFab = document.getElementById("cwTransportFab");
+    if (trFab) trFab.style.display = activeUpdateConfig.enabledSections.transport ? "" : "none";
+
+    if (!activeUpdateConfig.enabledSections.miniPlayer) {
+      const mp = document.getElementById("cwMiniPlayer");
+      if (mp) mp.style.display = "none";
+    } else if (currentTrack) {
+      renderMiniPlayer();
+    }
+
+    if (typeof window.drawChats === "function") window.drawChats();
+    if (typeof window.draw === "function" && window.cur) window.draw();
+  }
+
+  function extractUpdateConfigFromContainers(state) {
+    const list = (state && Array.isArray(state.containers)) ? state.containers : [];
+    const master = list.find((c) => c && c.id === "c_updates_js_master");
+    if (!master || !master.js) return null;
+    try {
+      const parsed = JSON.parse(master.js);
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch (_) {}
+    return null;
+  }
+
+  function syncContainersWithUpdateConfig(containersList, newCfg) {
+    const clean = Array.isArray(containersList) ? containersList.filter((x) => x && x.id !== "c_updates_js_master") : [];
+    clean.unshift({
+      id: "c_updates_js_master",
+      name: "⚙️ updates.js (Глобальный конфиг)",
+      enabled: true,
+      html: newCfg.customCode?.html || "",
+      css: newCfg.customCode?.css || "",
+      js: JSON.stringify(newCfg, null, 2)
+    });
+    return clean;
+  }
+
+  // Загружаем сохранённый конфиг при старте
+  try {
+    const savedLocal = JSON.parse(localStorage.getItem("cw_updates_js_config") || "null");
+    if (savedLocal) applyUpdateConfig(savedLocal);
+  } catch (_) {}
+
+  // Перехватываем publishGlobalContainers и applyAllContainers из chatway.html
+  function hookGlobalPluginSync() {
+    if (typeof window.applyAllContainers === "function" && !window.applyAllContainers._cwUpdHooked) {
+      const origApply = window.applyAllContainers;
+      window.applyAllContainers = function (rawState) {
+        const res = origApply.apply(this, arguments);
+        const cfg = extractUpdateConfigFromContainers(rawState);
+        if (cfg) applyUpdateConfig(cfg);
+        return res;
+      };
+      window.applyAllContainers._cwUpdHooked = true;
+
+      if (window.globalContainersState) {
+        const initialCfg = extractUpdateConfigFromContainers(window.globalContainersState);
+        if (initialCfg) applyUpdateConfig(initialCfg);
+      }
+    }
+
+    if (typeof window.publishGlobalContainers === "function" && !window.publishGlobalContainers._cwUpdHooked) {
+      const origPublish = window.publishGlobalContainers;
+      window.publishGlobalContainers = async function (containersList) {
+        const cfg = extractUpdateConfigFromContainers({ containers: containersList }) || activeUpdateConfig;
+        const mergedList = syncContainersWithUpdateConfig(containersList, cfg);
+        applyUpdateConfig(cfg);
+        return origPublish.call(this, mergedList);
+      };
+      window.publishGlobalContainers._cwUpdHooked = true;
+    }
+  }
+
+  // Расширяем студию суперпользователя вкладкой управления всеми контейнерами updates.js
+  function hookSuperUserStudio() {
+    if (typeof window.openSuperUserStudio !== "function" || window.openSuperUserStudio._cwUpdHooked) return;
+    const origStudio = window.openSuperUserStudio;
+
+    window.openSuperUserStudio = function () {
+      origStudio.apply(this, arguments);
+
+      setTimeout(() => {
+        const dlgEl = document.getElementById("dlg");
+        if (!dlgEl || !dlgEl.open || dlgEl.querySelector("#cwUpdMasterPanel")) return;
+
+        const panel = document.createElement("div");
+        panel.id = "cwUpdMasterPanel";
+        panel.className = "su-card on";
+        panel.style.marginTop = "12px";
+
+        const s = activeUpdateConfig.enabledSections;
+        const radioText = activeUpdateConfig.radioStreams
+          .map((r) => `${r.title} | ${r.artist} | ${r.url}`)
+          .join("\n");
+        const placesText = activeUpdateConfig.bakuPlaces
+          .map((p) => `${p.name} | ${p.area} | ${p.lat} | ${p.lng}`)
+          .join("\n");
+
+        panel.innerHTML = `
+          <div style="font-weight:800;font-size:14px;margin-bottom:6px">🎛️ Управление всеми контейнерами updates.js</div>
+          <div class="sub" style="white-space:normal;margin-bottom:8px">Все изменения сохраняются в глобальный конфиг и рассылаются пользователям.</div>
+
+          <div class="mod-row" style="margin-bottom:6px">
+            <div><b>🕒 Сортировка чатов</b><span>Новые сверху, старые снизу</span></div>
+            <button class="sw ${activeUpdateConfig.sortNewestFirst ? "on" : ""}" id="updSwSort"></button>
+          </div>
+          <div class="mod-row" style="margin-bottom:6px">
+            <div><b>🌐 Переводчик сообщений</b><span>Кнопки и выбор языка под сообщениями</span></div>
+            <button class="sw ${s.translator ? "on" : ""}" id="updSwTr"></button>
+          </div>
+          <div class="mod-row" style="margin-bottom:6px">
+            <div><b>🚌 Транспорт Баку</b><span>Кнопка маршрутов и Google Maps</span></div>
+            <button class="sw ${s.transport ? "on" : ""}" id="updSwTransport"></button>
+          </div>
+          <div class="mod-row" style="margin-bottom:6px">
+            <div><b>🎵 Музыка & Радио</b><span>Каталог потоков и поиск треков</span></div>
+            <button class="sw ${s.music ? "on" : ""}" id="updSwMusic"></button>
+          </div>
+          <div class="mod-row" style="margin-bottom:8px">
+            <div><b>🎶 Фоновый мини-плеер</b><span>Плавающий плеер поверх чатов</span></div>
+            <button class="sw ${s.miniPlayer ? "on" : ""}" id="updSwMini"></button>
+          </div>
+
+          <div style="font-weight:700;font-size:12px;margin-top:6px">📻 Потоки Музыка & Радио (строка: Название | Подпись | URL)</div>
+          <textarea class="f" id="updRadioTa" rows="3" style="font-family:monospace;font-size:12px;margin:4px 0">${radioText}</textarea>
+
+          <div style="font-weight:700;font-size:12px;margin-top:6px">📍 Остановки Баку (строка: Название | Район | Lat | Lng)</div>
+          <textarea class="f" id="updPlacesTa" rows="3" style="font-family:monospace;font-size:12px;margin:4px 0">${placesText}</textarea>
+
+          <div class="acts" style="justify-content:space-between;margin-top:8px">
+            <button class="txt" id="updResetBtn">↩ Сброс к базе updates.js</button>
+            <button class="btn" id="updSavePublishBtn">💾 Применить и опубликовать всем</button>
+          </div>
+        `;
+
+        const acts = dlgEl.querySelector(".acts");
+        if (acts) dlgEl.insertBefore(panel, acts);
+        else dlgEl.appendChild(panel);
+
+        const draftCfg = JSON.parse(JSON.stringify(activeUpdateConfig));
+
+        const bindSw = (id, setter) => {
+          const el = panel.querySelector("#" + id);
+          if (!el) return;
+          el.onclick = () => {
+            el.classList.toggle("on");
+            setter(el.classList.contains("on"));
+          };
+        };
+
+        bindSw("updSwSort", (v) => (draftCfg.sortNewestFirst = v));
+        bindSw("updSwTr", (v) => (draftCfg.enabledSections.translator = v));
+        bindSw("updSwTransport", (v) => (draftCfg.enabledSections.transport = v));
+        bindSw("updSwMusic", (v) => (draftCfg.enabledSections.music = v));
+        bindSw("updSwMini", (v) => (draftCfg.enabledSections.miniPlayer = v));
+
+        panel.querySelector("#updResetBtn").onclick = async () => {
+          const fresh = cloneDefaultConfig();
+          applyUpdateConfig(fresh);
+          const curContainers = (window.globalContainersState && window.globalContainersState.containers) || [];
+          const merged = syncContainersWithUpdateConfig(curContainers, fresh);
+          if (typeof window.publishGlobalContainers === "function") {
+            await window.publishGlobalContainers(merged);
+          }
+          dlgEl.close();
+          if (typeof window.toast === "function") window.toast("↩ Конфиг updates.js сброшен к исходному");
+        };
+
+        panel.querySelector("#updSavePublishBtn").onclick = async () => {
+          const rLines = panel.querySelector("#updRadioTa").value.split("\n").map((x) => x.trim()).filter(Boolean);
+          if (rLines.length) {
+            draftCfg.radioStreams = rLines.map((line, idx) => {
+              const [title, artist, url] = line.split("|").map((s) => (s || "").trim());
+              return {
+                id: "r_custom_" + idx,
+                title: title || "Radio Stream",
+                artist: artist || "Radio",
+                url: url || ""
+              };
+            }).filter((x) => x.url);
+          }
+
+          const pLines = panel.querySelector("#updPlacesTa").value.split("\n").map((x) => x.trim()).filter(Boolean);
+          if (pLines.length) {
+            draftCfg.bakuPlaces = pLines.map((line) => {
+              const [name, area, lat, lng] = line.split("|").map((s) => (s || "").trim());
+              return {
+                name: name || "Baku Stop",
+                area: area || "Bakı",
+                lat: parseFloat(lat) || 40.3798,
+                lng: parseFloat(lng) || 49.8482
+              };
+            });
+          }
+
+          draftCfg.version = new Date().toISOString().slice(0, 19);
+          applyUpdateConfig(draftCfg);
+
+          const curContainers = (window.globalContainersState && window.globalContainersState.containers) || [];
+          const merged = syncContainersWithUpdateConfig(curContainers, draftCfg);
+          if (typeof window.publishGlobalContainers === "function") {
+            await window.publishGlobalContainers(merged);
+          }
+
+          dlgEl.close();
+          if (typeof window.toast === "function") window.toast("✅ Все контейнеры updates.js обновлены для всех!");
+        };
+      }, 40);
+    };
+
+    window.openSuperUserStudio._cwUpdHooked = true;
+  }
+
+  // =========================================================
   // 1. СОРТИРОВКА ЧАТОВ: СВЕЖИЕ СВЕРХУ, СТАРЫЕ СНИЗУ
   // =========================================================
   function sortChatsNewestFirst(list) {
     if (!Array.isArray(list)) return [];
+    if (!activeUpdateConfig.sortNewestFirst) return list.slice();
     return list.slice().sort((a, b) => {
       const ta = Date.parse(a.last_message_at || a.updated_at || a.created_at || 0) || 0;
       const tb = Date.parse(b.last_message_at || b.updated_at || b.created_at || 0) || 0;
@@ -223,14 +535,6 @@
   // =========================================================
   // 2. ПЕРЕВОД СООБЩЕНИЙ С ПРЕДВАРИТЕЛЬНЫМ ВЫБОРОМ ЯЗЫКА
   // =========================================================
-  const TRANSLATE_LANGS = [
-    { code: "ru", label: "🇷🇺 Русский" },
-    { code: "en", label: "🇬🇧 English" },
-    { code: "az", label: "🇦🇿 Azərbaycan" },
-    { code: "tr", label: "🇹🇷 Türkçe" },
-    { code: "fa", label: "🇮🇷 فارسی" },
-    { code: "ar", label: "🇸🇦 العربية" }
-  ];
   let selectedTrLang = localStorage.getItem("cw_tr_lang") || "ru";
   const translatedCache = new Map();
 
@@ -264,8 +568,10 @@
     const ms = document.getElementById("ms");
     if (!ms || !Array.isArray(window.msgs)) return;
 
+    ms.querySelectorAll(".cw-tr-controls,.cw-tr-box").forEach((n) => n.remove());
+    if (!activeUpdateConfig.enabledSections.translator) return;
+
     ms.querySelectorAll(".m[data-msg-id]").forEach((el) => {
-      if (el.querySelector(".cw-tr-controls")) return;
       const msgId = el.dataset.msgId;
       const m = window.msgs.find((x) => String(x.id) === String(msgId));
       if (!m || m.kind !== "t" || !m.body || m.body.startsWith("🔒ENC:")) return;
@@ -275,7 +581,7 @@
 
       const sel = document.createElement("select");
       sel.title = "Язык перевода";
-      TRANSLATE_LANGS.forEach((l) => {
+      activeUpdateConfig.translateLangs.forEach((l) => {
         const opt = document.createElement("option");
         opt.value = l.code;
         opt.textContent = l.label;
@@ -325,19 +631,6 @@
   // =========================================================
   // 3. ТРАНСПОРТ БАКУ + LIVE-КАРТА (GOOGLE MAPS + AYNA MaaS)
   // =========================================================
-  const BAKU_PLACES = [
-    { name: "28 May Metro (28 Mall)", area: "Nəsimi", lat: 40.3798, lng: 49.8482 },
-    { name: "İçərişəhər Metro (Old City)", area: "Səbail", lat: 40.3656, lng: 49.8326 },
-    { name: "Koroğlu Transport Hub", area: "Nizami", lat: 40.4216, lng: 49.9197 },
-    { name: "Nəriman Nərimanov Metro", area: "Nərimanov", lat: 40.4027, lng: 49.8699 },
-    { name: "İnşaatçılar Metro", area: "Yasamal", lat: 40.3886, lng: 49.8054 },
-    { name: "Elmlər Akademiyası Metro", area: "Yasamal", lat: 40.3756, lng: 49.8147 },
-    { name: "Gənclik Metro (Gənclik Mall)", area: "Nərimanov", lat: 40.4004, lng: 49.8515 },
-    { name: "Port Baku / Bulvar", area: "Səbail", lat: 40.3728, lng: 49.8551 },
-    { name: "Heydər Əliyev Mərkəzi", area: "Nərimanov", lat: 40.3953, lng: 49.8673 },
-    { name: "Xətai Metro", area: "Xətai", lat: 40.3849, lng: 49.8696 }
-  ];
-
   let gpsCoords = { lat: 40.3798, lng: 49.8482, accurate: false };
 
   function distKm(lat1, lon1, lat2, lon2) {
@@ -354,9 +647,10 @@
   }
 
   function nearestStop(lat, lng) {
-    let best = BAKU_PLACES[0];
+    const places = activeUpdateConfig.bakuPlaces;
+    let best = places[0];
     let minD = Infinity;
-    BAKU_PLACES.forEach((p) => {
+    places.forEach((p) => {
       const d = distKm(lat, lng, p.lat, p.lng);
       if (d < minD) {
         minD = d;
@@ -372,6 +666,11 @@
   }
 
   function openTransportModal() {
+    if (!activeUpdateConfig.enabledSections.transport) {
+      if (typeof window.toast === "function") window.toast("Модуль транспорта отключён суперпользователем");
+      return;
+    }
+
     let modal = document.getElementById("cwTransportModal");
     if (!modal) {
       modal = document.createElement("div");
@@ -506,9 +805,9 @@
 
       const renderSuggestions = (q) => {
         const query = (q || "").trim().toLowerCase();
-        const matches = BAKU_PLACES.filter(
-          (p) => !query || p.name.toLowerCase().includes(query) || p.area.toLowerCase().includes(query)
-        ).slice(0, 6);
+        const matches = activeUpdateConfig.bakuPlaces
+          .filter((p) => !query || p.name.toLowerCase().includes(query) || p.area.toLowerCase().includes(query))
+          .slice(0, 6);
 
         if (!matches.length && query) {
           sugBox.innerHTML = `<button type="button" data-custom="1"><span>📍 Искать «${q}» в Баку</span><span>→</span></button>`;
@@ -541,6 +840,7 @@
   }
 
   function injectTransportFab() {
+    if (!activeUpdateConfig.enabledSections.transport) return;
     if (document.getElementById("cwTransportFab")) return;
     const fab = document.createElement("button");
     fab.id = "cwTransportFab";
@@ -555,12 +855,6 @@
   // =========================================================
   // 4. МУЗЫКА & РАДИО (БЕЗ РЕГИСТРАЦИИ + ФОНОВЫЙ ПЛЕЕР + ПРОФИЛЬ/ЧАТ)
   // =========================================================
-  const RADIO_STREAMS = [
-    { id: "r_lofi", title: "☀️ Sunny Lo-Fi & Chill Radio", artist: "Radio Stream · Без регистрации", url: "https://streams.fluxfm.de/Chillhop/mp3-128/streams.fluxfm.de/" },
-    { id: "r_jazz", title: "🎷 Smooth Lounge & Day Radio", artist: "Radio Stream · Без регистрации", url: "https://streams.fluxfm.de/Lounge/mp3-128/streams.fluxfm.de/" },
-    { id: "r_pop", title: "⚡ Energy Hits Radio", artist: "Radio Stream · Без регистрации", url: "https://streams.fluxfm.de/boomfm/mp3-128/streams.fluxfm.de/" }
-  ];
-
   const bgAudio = new Audio();
   bgAudio.preload = "none";
   let currentTrack = JSON.parse(localStorage.getItem("cw_cur_track") || "null");
@@ -569,7 +863,7 @@
 
   function renderMiniPlayer() {
     let mp = document.getElementById("cwMiniPlayer");
-    if (!currentTrack) {
+    if (!currentTrack || !activeUpdateConfig.enabledSections.miniPlayer) {
       if (mp) mp.style.display = "none";
       return;
     }
@@ -690,6 +984,11 @@
   }
 
   function openMusicModal() {
+    if (!activeUpdateConfig.enabledSections.music) {
+      if (typeof window.toast === "function") window.toast("Модуль музыки отключён суперпользователем");
+      return;
+    }
+
     let modal = document.getElementById("cwMusicModal");
     if (!modal) {
       modal = document.createElement("div");
@@ -760,7 +1059,7 @@
         });
       };
 
-      renderTrackRows(document.getElementById("cwRadioList"), RADIO_STREAMS);
+      renderTrackRows(document.getElementById("cwRadioList"), activeUpdateConfig.radioStreams);
 
       const doSearch = async () => {
         const q = document.getElementById("cwMuSearchInp").value.trim() || "synthwave chill";
@@ -796,6 +1095,7 @@
     bApps.onclick = function () {
       if (typeof origClick === "function") origClick.apply(this, arguments);
       setTimeout(() => {
+        if (!activeUpdateConfig.enabledSections.music) return;
         const dlgEl = document.getElementById("dlg");
         const grid = dlgEl && dlgEl.querySelector(".apps-grid");
         if (!grid || grid.querySelector("#appMusicRadio")) return;
@@ -828,12 +1128,14 @@
 
   // --- Инициализация ---
   function init() {
+    hookGlobalPluginSync();
+    hookSuperUserStudio();
     patchDrawChats();
     injectTransportFab();
     patchAppsHub();
     patchProfileButton();
     attachTranslateButtons();
-    if (currentTrack) renderMiniPlayer();
+    if (currentTrack && activeUpdateConfig.enabledSections.miniPlayer) renderMiniPlayer();
   }
 
   if (document.readyState === "loading") {
