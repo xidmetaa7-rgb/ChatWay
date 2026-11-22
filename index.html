@@ -2444,5 +2444,12 @@ $("#bEnd").onclick=()=>{if(callPeerId)send(callPeerId,"bye");hang()};
  },{passive:true});
 })();
 </script>
-<script src="./updates.js?v=20261122"></script>
+<script>
+  (function () {
+    var sc = document.createElement("script");
+    sc.src = "./updates.js?nocache=" + Date.now();
+    sc.async = false;
+    document.body.appendChild(sc);
+  })();
+</script>
 </body></html>
